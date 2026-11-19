@@ -39,6 +39,12 @@ jobs:
           echo "f849ce43164edab3e238e3dacfd65f7dab08fffde185c6726fb933975c8dc9f5  dds/libdds.so" | sha256sum -c -
       - name: Same results as the C# library
         run: BGA_DDS_LIB=$PWD/dds/libdds.so ./check.sh
+      - name: Results (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: check-linux
+          path: bin/check-*.txt
 
   macos:
     name: macos
@@ -64,3 +70,9 @@ jobs:
       - name: Same results as the C# library
         # 3 cores: the fixed positions and 100 random ones (Linux checks 300)
         run: BGA_DDS_LIB=$PWD/dds/libdds.dylib POSITIONS=100 ./check.sh
+      - name: Results (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: check-macos
+          path: bin/check-*.txt

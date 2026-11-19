@@ -46,5 +46,6 @@ if cmp -s bin/check-csharp.txt bin/check-cpp.txt; then
   echo "same results as the C# library ($(git -C extern/BGA describe --always --tags))"
 else
   echo "RESULTS DIFFER: bin/check-csharp.txt bin/check-cpp.txt" >&2
+  diff bin/check-csharp.txt bin/check-cpp.txt | head -40 >&2
   exit 1
 fi
