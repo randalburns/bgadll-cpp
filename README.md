@@ -30,8 +30,12 @@ One loop in the sampler is vectorised. On x86-64 it is AVX2. Elsewhere (Apple si
 
 ## Use with BEN
 
-Copy `bin/BGADLL.so` over `<ben>/bin/BGA/linux/x64/BGADLL.so` (macOS: `bin/BGADLL.dylib` over
-`<ben>/bin/BGA/macos/arm64/BGADLL.dylib`).
+BEN has this library as a submodule (`extern/BGA/BGADLL.Cpp`, through
+[randalburns/BGA](https://github.com/randalburns/BGA)). `bash build_native.sh` in BEN builds
+it, or run `./build.sh` here; BEN then loads `bin/BGADLL.so` (macOS: `bin/BGADLL.dylib`) from
+this directory in place of the C# library under `<ben>/bin/BGA`, which stays there for
+`BEN_BGADLL=csharp`. Do not copy this library over the C# one. BEN's `src/preflight.py`
+reports the engine and solver in use.
 
 The solver is chosen once per process:
 
@@ -41,9 +45,12 @@ The solver is chosen once per process:
 | `BGA_DDFAST_LIB` / `BGA_DDS_LIB` | path of `libddfast` / `libdds` (`.so`, or `.dylib` on macOS) |
 | `DDFAST_TABLES` | ddfast's table directory (as for BEN's own ddfast use) |
 
-A library already in the process is used first. BEN preloads ddfast's `libdds.so`, which
-loads `libddfast.so`, so BGADLL and BEN's DDSolver share one copy of the tables. Otherwise
-the library is looked for beside `BGADLL.so`, then on the loader's path. `bga_dds_backend()`
+A library already in the process is used first, then `BGA_DDFAST_LIB` / `BGA_DDS_LIB`, then
+one beside `BGADLL.so`, then the loader's path. BEN's DDSolver has already loaded ddfast's
+`libddfast` (its Python module links it), so BGADLL uses that copy and both share one set of
+tables; BEN also sets `BGA_DDFAST_LIB` to it, and `BGA_DDS_LIB` to its vendored DDS library for
+the Haglund backend (`BEN_PIMC_DDS=haglund`, or when ddfast is not built). ddfast's
+`libdds` (DDS's C interface) is for the C# library and is not used here. `bga_dds_backend()`
 reports `ddfast`, `haglund` or `none`. With no solver, `bga_pimc_setup` and
 `bga_pimcdef_setup` return -1.
 
