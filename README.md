@@ -1,7 +1,7 @@
 # bgadll-cpp
 
 A C++ port of the BGADLL engine of [BGA](https://github.com/ThorvaldAagaard/BGA) (`PIMC`, `PIMCDef` and the classes they use) with the same C
-ABI as `BGADLL.Native` (the 61 `bga_*` functions of [BGAFFI.cs](https://github.com/randalburns/BGA/blob/cpp-ddfast-port/BGADLL.Native/BGAFFI.cs)).
+ABI as `BGADLL.Native` (the 61 `bga_*` functions of [BGAFFI.cs](https://github.com/ThorvaldAagaard/BGA/blob/main/BGADLL.Native/BGAFFI.cs)).
 It is a drop-in for BEN's `bin/BGA/linux/x64/BGADLL.so` (and `bin/BGA/macos/arm64/BGADLL.dylib`):
 BEN's ctypes bindings (`src/pimc/BGADLL_Native.py`) load it unchanged.
 
@@ -91,7 +91,7 @@ cmp cpp.txt cs.txt
 
 The C# library this ports, and the reference its results are checked against, is BGA's
 `BGADLL` and `BGADLL.Native`. This repository is the `BGADLL.Cpp` submodule of
-[randalburns/BGA](https://github.com/randalburns/BGA/tree/cpp-ddfast-port), a fork of BGA
+[randalburns/BGA](https://github.com/randalburns/BGA), a fork of BGA
 that keeps the C# sources alongside for that check.
 
 ## License
