@@ -1,6 +1,17 @@
 #include "model.hpp"
 
 #include <sched.h>
+// shuffle_prefix's vector loop: hand-written AVX2 on x86 when the target has it, else
+// Highway (github.com/google/highway, static dispatch: NEON on Apple silicon) when its headers
+// are on the include path, else plain C++.
+#if defined(__AVX2__)
+#include <immintrin.h>
+#elif defined(__has_include) && !defined(BGA_NO_HIGHWAY)
+#if __has_include(<hwy/highway.h>)
+#include <hwy/highway.h>
+#define BGA_HIGHWAY 1
+#endif
+#endif
 #include <thread>
 
 #include <cstring>
@@ -44,6 +55,18 @@ struct BinomialTable {
   }
 };
 const BinomialTable g_binomial;
+
+// binomial(n, k - 1) at [n][k], so that k = 0 reads binomial(n, -1) = 0.
+struct ShiftedBinomial {
+  int64_t t[53][54];
+  ShiftedBinomial() {
+    for (int n = 0; n < 53; n++) {
+      t[n][0] = 0;
+      for (int k = 0; k < 53; k++) t[n][k + 1] = g_binomial.t[n][k];
+    }
+  }
+};
+const ShiftedBinomial g_binomial_shifted;
 
 // ----- SHA-256 (FIPS 180-4), for the seed only -----
 struct Sha256 {
@@ -118,6 +141,20 @@ void combination_at(int n, int k, int64_t index, uint8_t* out) {
   for (; r < k; r++) out[r] = 0;
 }
 
+Mask combination_mask(int n, int k, int64_t index, const Mask* bits) {
+  int64_t x = index;
+  int r = 0;
+  Mask m = 0;
+  for (int i = 1; i <= n; i++) {
+    const int64_t c = g_binomial_shifted.t[n - i][k - r];  // binomial(n - i, k - r - 1)
+    const int64_t take = -int64_t(x < c);                 // all ones if i is in the combination
+    m |= bits[i - 1] & Mask(take);
+    x -= c & ~take;
+    r += int(take & 1);
+  }
+  return m;
+}
+
 int calculate_seed(const std::string& input) {
   uint8_t d[32];
   Sha256().digest(input, d);
@@ -143,6 +180,135 @@ void shuffle(std::vector<int>& a, int n, CrossPlatformRandom& rnd) {
     }
     n -= cnt;
   }
+}
+
+// Swap s of shuffle() (s = 0, 1, ...) exchanges a[t] and a[k] with t = n-1-s and k the
+// generator's (s+1)-th draw below t+1. SplitMix32's draw i depends only on state + i*gamma,
+// so k is known for any t without running the generator in order.
+//
+// The final a[j] is a[p] of the identity, where p is j carried back through the swaps from
+// the last (t = 1) to the first (t = n-1): a swap moves a tracked position p to its partner
+// when p is t or k. All m positions are carried in one pass over t; a bitmap of the tracked
+// positions makes the pass a cheap test per swap, and the rare hits update the positions.
+namespace {
+inline uint32_t swap_target(uint32_t state, int n, uint32_t t) {
+  uint32_t z = state + uint32_t(n - int(t)) * 0x9E3779B9u;
+  z = (z ^ (z >> 16)) * 0x85EBCA6Bu;
+  z = (z ^ (z >> 13)) * 0xC2B2AE35u;
+  z ^= z >> 16;
+  return uint32_t((uint64_t(z) * (t + 1)) >> 32);
+}
+}  // namespace
+
+void shuffle_prefix(int n, uint32_t state, int m, int* out) {
+  // 32-bit words, so AVX2 can gather them (the same bit order as one long bit string)
+  std::vector<uint32_t> bits((size_t(n) + 31) / 32 + 1);
+  auto test = [&](uint32_t x) { return (bits[x >> 5] >> (x & 31)) & 1; };
+  auto flip = [&](uint32_t x) { bits[x >> 5] ^= 1u << (x & 31); };
+  std::vector<int> pos{std::vector<int>(size_t(m))};  // pos[q]: where final position q is traced to so far
+  std::unordered_map<uint32_t, int> owner;           // tracked position -> q
+  owner.reserve(size_t(m) * 2);
+  for (int q = 0; q < m; q++) {
+    pos[size_t(q)] = q;
+    owner[uint32_t(q)] = q;
+    flip(uint32_t(q));
+  }
+  auto step = [&](uint32_t t, uint32_t k) {
+    const uint32_t ht = test(t), hk = test(k);
+    if (!(ht | hk) || k == t) return;
+    if (ht && hk) {
+      int& a = owner[t];
+      int& b = owner[k];
+      std::swap(a, b);
+      pos[size_t(a)] = int(t);
+      pos[size_t(b)] = int(k);
+    } else {
+      const uint32_t from = ht ? t : k, to = ht ? k : t;
+      auto it = owner.find(from);
+      const int q = it->second;
+      owner.erase(it);
+      owner[to] = q;
+      pos[size_t(q)] = int(to);
+      flip(from);
+      flip(to);
+    }
+  };
+  int t0 = 1;
+#if defined(__AVX2__)
+  // 8 swaps at a time: their targets, and one test of all 16 positions against the bitmap.
+  // A group with any tracked position is redone one swap at a time, in order.
+  {
+    const __m256i lane = _mm256_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7), one = _mm256_set1_epi32(1);
+    const __m256i c31 = _mm256_set1_epi32(31), gamma = _mm256_set1_epi32(int(0x9E3779B9u));
+    const __m256i m1 = _mm256_set1_epi32(int(0x85EBCA6Bu)), m2 = _mm256_set1_epi32(int(0xC2B2AE35u));
+    const __m256i vstate = _mm256_set1_epi32(int(state)), vn = _mm256_set1_epi32(n);
+    const int* b = reinterpret_cast<const int*>(bits.data());
+    alignas(32) uint32_t ks[8];
+    for (; t0 + 8 <= n; t0 += 8) {
+      const __m256i t = _mm256_add_epi32(_mm256_set1_epi32(t0), lane);
+      __m256i z = _mm256_add_epi32(vstate, _mm256_mullo_epi32(_mm256_sub_epi32(vn, t), gamma));
+      z = _mm256_mullo_epi32(_mm256_xor_si256(z, _mm256_srli_epi32(z, 16)), m1);
+      z = _mm256_mullo_epi32(_mm256_xor_si256(z, _mm256_srli_epi32(z, 13)), m2);
+      z = _mm256_xor_si256(z, _mm256_srli_epi32(z, 16));
+      const __m256i t1 = _mm256_add_epi32(t, one);
+      const __m256i pe = _mm256_mul_epu32(z, t1);
+      const __m256i po = _mm256_mul_epu32(_mm256_srli_epi64(z, 32), _mm256_srli_epi64(t1, 32));
+      const __m256i k = _mm256_blend_epi32(_mm256_srli_epi64(pe, 32), po, 0xAA);
+      const __m256i wk = _mm256_i32gather_epi32(b, _mm256_srli_epi32(k, 5), 4);
+      const __m256i wt = _mm256_i32gather_epi32(b, _mm256_srli_epi32(t, 5), 4);
+      const __m256i hit = _mm256_or_si256(_mm256_srlv_epi32(wk, _mm256_and_si256(k, c31)),
+                                          _mm256_srlv_epi32(wt, _mm256_and_si256(t, c31)));
+      if (_mm256_testz_si256(hit, one)) continue;
+      _mm256_store_si256(reinterpret_cast<__m256i*>(ks), k);
+      for (int i = 0; i < 8; i++) step(uint32_t(t0 + i), ks[i]);
+    }
+  }
+#elif defined(BGA_HIGHWAY)
+  // The same loop over Highway's widest vectors for the target.
+  {
+    namespace hn = hwy::HWY_NAMESPACE;
+    const hn::ScalableTag<uint32_t> d;
+    const hn::RebindToSigned<decltype(d)> di;
+    const hn::Repartition<uint64_t, decltype(d)> d64;
+    const int lanes = int(hn::Lanes(d));
+    const auto lane = hn::Iota(d, 0), one = hn::Set(d, 1u), c31 = hn::Set(d, 31u);
+    const auto gamma = hn::Set(d, 0x9E3779B9u), m1 = hn::Set(d, 0x85EBCA6Bu), m2 = hn::Set(d, 0xC2B2AE35u);
+    const auto vstate = hn::Set(d, state), vn = hn::Set(d, uint32_t(n));
+    const int32_t* b = reinterpret_cast<const int32_t*>(bits.data());
+    std::vector<uint32_t> ks(static_cast<size_t>(lanes));
+    for (; t0 + lanes <= n; t0 += lanes) {
+      const auto t = hn::Add(hn::Set(d, uint32_t(t0)), lane);
+      auto z = hn::Add(vstate, hn::Mul(hn::Sub(vn, t), gamma));
+      z = hn::Mul(hn::Xor(z, hn::ShiftRight<16>(z)), m1);
+      z = hn::Mul(hn::Xor(z, hn::ShiftRight<13>(z)), m2);
+      z = hn::Xor(z, hn::ShiftRight<16>(z));
+      const auto t1 = hn::Add(t, one);
+      // the high half of z * (t + 1): even lanes by MulEven, odd lanes moved down first
+      const auto pe = hn::MulEven(z, t1);
+      const auto po = hn::MulEven(hn::BitCast(d, hn::ShiftRight<32>(hn::BitCast(d64, z))),
+                                  hn::BitCast(d, hn::ShiftRight<32>(hn::BitCast(d64, t1))));
+      const auto k = hn::OddEven(hn::BitCast(d, po), hn::BitCast(d, hn::ShiftRight<32>(pe)));
+      const auto wk = hn::BitCast(d, hn::GatherIndex(di, b, hn::BitCast(di, hn::ShiftRight<5>(k))));
+      const auto wt = hn::BitCast(d, hn::GatherIndex(di, b, hn::BitCast(di, hn::ShiftRight<5>(t))));
+      const auto hit = hn::And(hn::Or(hn::Shr(wk, hn::And(k, c31)), hn::Shr(wt, hn::And(t, c31))), one);
+      if (hn::AllTrue(d, hn::Eq(hit, hn::Zero(d)))) continue;
+      hn::StoreU(k, d, ks.data());
+      for (int i = 0; i < lanes; i++) step(uint32_t(t0 + i), ks[size_t(i)]);
+    }
+  }
+#endif
+  for (; t0 < n; t0++) step(uint32_t(t0), swap_target(state, n, uint32_t(t0)));
+  for (int q = 0; q < m; q++) out[q] = pos[size_t(q)];
+}
+
+const char* shuffle_simd() {
+#if defined(__AVX2__)
+  return "avx2";
+#elif defined(BGA_HIGHWAY)
+  return hwy::TargetName(HWY_TARGET);
+#else
+  return "scalar";
+#endif
 }
 
 int processor_count() {

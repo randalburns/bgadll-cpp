@@ -185,6 +185,8 @@ BGA_API int bga_constraints_get_prop(void* h, int index) {
 
 // ===== DDS diagnostics =====
 BGA_API char* bga_dds_backend() { return alloc_string(dds_backend_name()); }
+// Not in BGAFFI.cs: the vector code of the sampler ("avx2", a Highway target, or "scalar").
+BGA_API char* bga_simd() { return alloc_string(shuffle_simd()); }
 
 // ===== PIMCDef =====
 BGA_API void* bga_pimcdef_create(int max_threads, int verbose) { return new PIMCDef(max_threads, verbose != 0); }

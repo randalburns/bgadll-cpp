@@ -67,6 +67,17 @@ class Engine {
 
  protected:
   void load_combinations(int n, int k);
+  // Entry i of the shuffled combination order (Utils.Shuffle of 0..n-1). Computed on demand:
+  // the samplers read a short prefix of it (a few hundred of C(26,13) = 10.4M entries).
+  int shuffled(int i) {
+    if (i >= n_shuffled_) extend_shuffled(i + 1);
+    return combination_index_[size_t(i)];
+  }
+  void extend_shuffled(int need);
+  // FindSamples: the combinations accept() takes, in shuffled order, until playouts reach
+  // max_playout; updates examined and playouts as the serial loop does. accept must be
+  // thread-safe: past the first few thousand combinations the rest are scanned in parallel.
+  std::vector<int> scan(const std::function<bool(int)>& accept);
   void clear_common();
   // Queues the samples and starts the workers; body(pos) handles one sample.
   void start(const std::vector<int>& samples, std::function<bool()> stop_check, std::function<void(int)> body);
@@ -87,7 +98,9 @@ class Engine {
   std::atomic<size_t> head_{0};
 
   int n_combinations_ = 0, comb_n_ = 0, comb_k_ = 0;
-  std::vector<int> combination_index_;
+  std::vector<int> combination_index_;  // its first n_shuffled_ entries are known
+  int n_shuffled_ = 0;
+  uint32_t shuffle_state_ = 0;  // the generator's state before the shuffle
   CrossPlatformRandom random_{0};
   int seed_ = 0;
 

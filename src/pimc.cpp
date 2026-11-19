@@ -52,6 +52,21 @@ Pool& pool() {
   return *p;
 }
 
+// Runs fn(0) .. fn(n - 1) on the pool and returns when all have finished.
+void run_parallel(int n, const std::function<void(int)>& fn) {
+  std::mutex m;
+  std::condition_variable cv;
+  int left = n;
+  for (int t = 0; t < n; t++)
+    pool().submit([&, t] {
+      fn(t);
+      std::lock_guard<std::mutex> l(m);
+      if (--left == 0) cv.notify_all();
+    });
+  std::unique_lock<std::mutex> l(m);
+  cv.wait(l, [&] { return left == 0; });
+}
+
 std::string join(const std::vector<std::string>& v, const char* sep) {
   std::string s;
   for (size_t i = 0; i < v.size(); i++) {
@@ -138,14 +153,85 @@ void Engine::load_combinations(int n, int k) {
   n_combinations_ = int(binomial(n, k));
   comb_n_ = n;
   comb_k_ = k;
-  combination_index_.resize(size_t(n_combinations_));
-  for (int i = 0; i < n_combinations_; i++) combination_index_[size_t(i)] = i;
-  shuffle(combination_index_, n_combinations_, random_);
+  shuffle_state_ = random_.state;
+  n_shuffled_ = 0;
+  combination_index_.clear();
+  if (n_combinations_ > 1) random_.state += uint32_t(n_combinations_ - 1) * 0x9E3779B9u;  // as after Shuffle
+}
+
+void Engine::extend_shuffled(int need) {
+  const int n = n_combinations_;
+  if (need > n) throw std::out_of_range("combination index");
+  // Below 512K combinations (C(20,10) and fewer), or once a sixteenth is needed, the whole
+  // shuffle is as cheap.
+  if (n < (1 << 19) || need > n / 16) {
+    combination_index_.resize(size_t(n));
+    for (int i = 0; i < n; i++) combination_index_[size_t(i)] = i;
+    CrossPlatformRandom r(0);
+    r.state = shuffle_state_;
+    shuffle(combination_index_, n, r);
+    n_shuffled_ = n;
+    return;
+  }
+  const int m = std::min(n / 16, std::max({need, 4 * n_shuffled_, 1024}));
+  combination_index_.resize(size_t(m));
+  shuffle_prefix(n, shuffle_state_, m, combination_index_.data());
+  n_shuffled_ = m;
+}
+
+std::vector<int> Engine::scan(const std::function<bool(int)>& accept) {
+  std::vector<int> out;
+  const int n = n_combinations_;
+  const int budget = max_playout_ - playouts_.load();
+  int i = 0;  // combinations examined
+  // Serially first: most positions find their samples in the first few hundred.
+  for (const int serial = std::min(n, 8192); i < serial && int(out.size()) < budget; i++) {
+    const int idx = shuffled(i);
+    if (accept(idx)) out.push_back(idx);
+  }
+  if (int(out.size()) < budget && i < n) {
+    // The rest in chunks, claimed in order. Once the chunks finished hold enough samples, no
+    // chunk past those already claimed can contribute, so claiming stops.
+    extend_shuffled(n);
+    constexpr int kChunk = 4096;
+    const int first = i, nchunks = (n - first + kChunk - 1) / kChunk;
+    const int need = budget - int(out.size());
+    std::vector<std::vector<int>> hits{std::vector<std::vector<int>>(size_t(nchunks))};  // positions in the shuffled order
+    std::atomic<int> next{0}, found{0};
+    run_parallel(std::min(threads_, nchunks), [&](int) {
+      for (;;) {
+        if (found.load(std::memory_order_relaxed) >= need) return;
+        const int c = next.fetch_add(1);
+        if (c >= nchunks) return;
+        std::vector<int>& h = hits[size_t(c)];
+        const int end = std::min(n, first + (c + 1) * kChunk);
+        for (int j = first + c * kChunk; j < end; j++)
+          if (accept(combination_index_[size_t(j)])) h.push_back(j);
+        found.fetch_add(int(h.size()), std::memory_order_relaxed);
+      }
+    });
+    i = n;
+    for (const std::vector<int>& h : hits) {
+      for (int j : h) {
+        out.push_back(combination_index_[size_t(j)]);
+        if (int(out.size()) >= budget) {
+          i = j + 1;
+          break;
+        }
+      }
+      if (int(out.size()) >= budget) break;
+    }
+  }
+  examined_.fetch_add(i);
+  playouts_.fetch_add(int(out.size()));
+  if (verbose_) std::printf("Examined %d Playout %d\n", examined_.load(), playouts_.load());
+  return out;
 }
 
 void Engine::clear_common() {
   output_.clear();
   n_combinations_ = 0;
+  n_shuffled_ = 0;
   examined_ = 0;
   head_ = queue_.size();  // drain the queue
 }
@@ -363,33 +449,19 @@ void PIMC::setup(const std::vector<Hand>& our, const Hand& oppos, const Play& cu
 }
 
 std::vector<int> PIMC::find_samples() {
-  std::vector<int> samples;
   const int nn = popcount(north_m_), ns = popcount(south_m_);
-  uint8_t set[52];
-  for (int i = 0; i < n_combinations_; i++) {
-    if (playouts_.load(std::memory_order_relaxed) >= max_playout_) break;
-    int idx = combination_index_[size_t(i)];
-    combination_at(comb_n_, comb_k_, idx, set);
-    examined_.fetch_add(1, std::memory_order_relaxed);
-    Mask w = 0;
-    for (int j = 0; j < comb_k_; j++) w |= rem_bits_[size_t(set[j] - 1)];
+  return scan([&](int idx) {
+    Mask w = combination_mask(comb_n_, comb_k_, idx, rem_bits_.data());
     Mask e = (rem_mask_ & ~w) | east_m_;
     w |= west_m_;
-    int ne = popcount(e);
-    if (!(nn == ne && ne == ns && ns == popcount(w))) continue;
-    if (ignore(e, east_c_) || ignore(w, west_c_)) continue;
-    samples.push_back(idx);
-    playouts_.fetch_add(1, std::memory_order_relaxed);
-  }
-  if (verbose_) std::printf("Examined %d Playout %d\n", examined_.load(), playouts_.load());
-  return samples;
+    const int ne = popcount(e);
+    if (!(nn == ne && ne == ns && ns == popcount(w))) return false;
+    return !ignore(e, east_c_) && !ignore(w, west_c_);
+  });
 }
 
 void PIMC::sample(int pos, Trump trump, const std::vector<int>& keys) {
-  uint8_t set[52];
-  combination_at(comb_n_, comb_k_, pos, set);
-  Mask w = 0;
-  for (int j = 0; j < comb_k_; j++) w |= rem_bits_[size_t(set[j] - 1)];
+  Mask w = combination_mask(comb_n_, comb_k_, pos, rem_bits_.data());
   Mask e = (rem_mask_ & ~w) | east_m_;
   w |= west_m_;
   double weight = shape_odds(east_shown_m_ | e) * shape_odds(west_shown_m_ | w);
@@ -616,35 +688,21 @@ std::string PIMCDef::setup(const std::vector<Hand>& our, const Hand& oppos, cons
 }
 
 std::vector<int> PIMCDef::find_samples() {
-  std::vector<int> samples;
   const int nd = popcount(dummy_m_), nw = popcount(our_m_);
-  uint8_t set[52];
-  for (int i = 0; i < n_combinations_; i++) {
-    if (playouts_.load(std::memory_order_relaxed) >= max_playout_) break;
-    int idx = combination_index_[size_t(i)];
-    combination_at(comb_n_, comb_k_, idx, set);
-    examined_.fetch_add(1, std::memory_order_relaxed);
-    Mask p = 0;
-    for (int j = 0; j < comb_k_; j++) p |= rem_bits_[size_t(set[j] - 1)];
+  return scan([&](int idx) {
+    Mask p = combination_mask(comb_n_, comb_k_, idx, rem_bits_.data());
     Mask d = (rem_mask_ & ~p) | declarer_m_;
     p |= partner_m_;
     // N E S W lengths all equal (E/W are partner and us, in either order)
-    int np = popcount(p), ndecl = popcount(d);
-    if (!(nd == np && np == ndecl && ndecl == nw)) continue;
-    if (ignore(d, declarer_c_) || ignore(p, partner_c_)) continue;
-    samples.push_back(idx);
-    playouts_.fetch_add(1, std::memory_order_relaxed);
-  }
-  if (verbose_) std::printf("Examined %d Playout %d\n", examined_.load(), playouts_.load());
-  return samples;
+    const int np = popcount(p), ndecl = popcount(d);
+    if (!(nd == np && np == ndecl && ndecl == nw)) return false;
+    return !ignore(d, declarer_c_) && !ignore(p, partner_c_);
+  });
 }
 
 void PIMCDef::sample(int pos, Trump trump, const std::vector<int>& keys) {
-  uint8_t set[52];
-  combination_at(comb_n_, comb_k_, pos, set);
   examined_.fetch_add(1, std::memory_order_relaxed);
-  Mask p = 0;
-  for (int j = 0; j < comb_k_; j++) p |= rem_bits_[size_t(set[j] - 1)];
+  Mask p = combination_mask(comb_n_, comb_k_, pos, rem_bits_.data());
   Mask d = (rem_mask_ & ~p) | declarer_m_;
   p |= partner_m_;
   if (!(popcount(dummy_m_) == popcount(our_m_) && popcount(p) == popcount(d) && popcount(d) == popcount(our_m_)))

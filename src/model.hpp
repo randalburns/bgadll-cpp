@@ -298,11 +298,20 @@ int64_t binomial(int n, int k);
 // Utils.GetCombinationAtIndex: the k (1-based) indexes of combination `index` of n.
 void combination_at(int n, int k, int64_t index, uint8_t* out);
 
+// The same combination as a card mask: the OR of bits[i - 1] over its indexes i. Branch-free.
+Mask combination_mask(int n, int k, int64_t index, const Mask* bits);
+
 // Utils.CalculateSeed: the first 4 bytes of SHA-256(UTF-8 input), little-endian.
 int calculate_seed(const std::string& input);
 
 // Utils.Shuffle (Fisher-Yates from the end).
 void shuffle(std::vector<int>& a, int n, CrossPlatformRandom& rnd);
+
+// The first m entries of shuffle() applied to 0..n-1 by a generator in state `state`, without
+// the n-entry array: out[j] is the value shuffle() leaves at a[j].
+void shuffle_prefix(int n, uint32_t state, int m, int* out);
+// The vector code shuffle_prefix was built with: "avx2", a Highway target name, or "scalar".
+const char* shuffle_simd();
 
 // The number of processors as .NET's Environment.ProcessorCount sees it (affinity).
 int processor_count();

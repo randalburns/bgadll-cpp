@@ -392,8 +392,12 @@ int main(int argc, char** argv) {
   }
   Api api = load_api(lib);
   char* be = api.dds_backend();
-  std::printf("lib=%s backend=%s threads=%d\n", lib_path.c_str(), be, threads);
+  // bga_simd is the C++ library's only (optional: the C# one lacks it)
+  auto simd_fn = reinterpret_cast<char* (*)()>(dlsym(lib, "bga_simd"));
+  char* simd = simd_fn ? simd_fn() : nullptr;
+  std::printf("lib=%s backend=%s simd=%s threads=%d\n", lib_path.c_str(), be, simd ? simd : "-", threads);
   api.free_string(be);
+  if (simd) api.free_string(simd);
 
   FILE* dump = dump_path.empty() ? nullptr : std::fopen(dump_path.c_str(), "w");
   std::vector<Position> fixed = fixed_positions();

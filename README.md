@@ -21,6 +21,13 @@ C++17, no other dependencies: g++ on Linux (libstdc++ linked statically, `-march
 default on x86-64; `ARCH` overrides), clang++ on macOS. The solver library is opened at run
 time with `dlopen`.
 
+One loop in the sampler is vectorised. On x86-64 it is AVX2. Elsewhere (Apple silicon) it uses
+[Highway](https://github.com/google/highway) if its headers are found, else plain C++.
+`build.sh` looks for Highway with pkg-config, in Homebrew's include directory
+(`brew install highway`) and beside a ddfast checkout; `HWY=<dir>` names the directory holding
+`hwy/highway.h`, `HWY=none` builds without it. It prints the choice (`vector code: ...`), and
+`bga_simd()` (not in `BGAFFI.cs`) reports it at run time. All three give the same results.
+
 ## Use with BEN
 
 Copy `bin/BGADLL.so` over `<ben>/bin/BGA/linux/x64/BGADLL.so` (macOS: `bin/BGADLL.dylib` over
@@ -44,7 +51,8 @@ reports `ddfast`, `haglund` or `none`. With no solver, `bga_pimc_setup` and
 
 Given the same inputs, the port makes the same samples in the same order:
 - the same seed (SHA-256 of the two known hands);
-- the same SplitMix32 Fisher-Yates order of the opponents' splits;
+- the same SplitMix32 Fisher-Yates order of the opponents' splits (computed only as far as
+  it is read: see below);
 - the same constraint handling and the same weights.
 
 So it returns the same `(tricks, weight)` lists. `bench/bench_bga.cpp` checks this. It drives
@@ -60,8 +68,10 @@ Milliseconds per evaluation over those positions:
 
 | | C# on DDS | C++ on DDS | C# on ddfast | C++ on ddfast |
 |---|---|---|---|---|
-| Linux x86-64 (Zen 5, 12 threads) | 185.5 | 143.9 | 67.7 | 36.0 |
-| macOS (Apple M5, 10 threads) | 133.6 | 124.7 | 31.0 | 21.5 |
+| Linux x86-64 (Ryzen AI 9 HX 370, 12 threads) | 126.0 | 88.9 | 55.6 | 18.5 |
+| macOS (Apple M5, 10 threads), before the sampling changes below | 133.6 | 124.7 | 31.0 | 21.5 |
+
+On ddfast, 96% of the C++ library's time is in ddfast's search (perf, Linux).
 
 ```sh
 g++ -std=c++17 -O2 -o bin/bench_bga bench/bench_bga.cpp -ldl
@@ -71,6 +81,14 @@ cmp cpp.txt cs.txt
 ```
 
 ## Differences from the C# library
+
+The sampling is the same as in C#, done in less time:
+- Utils.Shuffle orders all C(n, n/2) splits, 10.4 million on the first trick, and FindSamples
+  usually reads a few hundred. SplitMix32's i-th draw depends only on the seed and i, so the
+  entries read are worked out on their own (`shuffle_prefix`, `src/model.cpp`), exactly as
+  the full shuffle would leave them. Below 512K splits the whole shuffle is done.
+- After the first 8192 splits, FindSamples checks the rest on all threads and merges them in
+  order, so the samples, `Examined` and `Playouts` are as in C#.
 
 - `version()` is `1.0.0.0`.
 - Samples are 64-bit card masks rather than lists of `Card` objects and strings.
