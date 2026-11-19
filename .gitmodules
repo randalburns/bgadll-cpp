@@ -1,0 +1,5 @@
+[submodule "extern/BGA"]
+	path = extern/BGA
+	url = https://github.com/ThorvaldAagaard/BGA.git
+	update = none
+	shallow = true

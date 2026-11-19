@@ -30,9 +30,8 @@ One loop in the sampler is vectorised. On x86-64 it is AVX2. Elsewhere (Apple si
 
 ## Use with BEN
 
-BEN has this library as a submodule (`extern/BGA/BGADLL.Cpp`, through
-[randalburns/BGA](https://github.com/randalburns/BGA)). `bash build_native.sh` in BEN builds
-it, or run `./build.sh` here; BEN then loads `bin/BGADLL.so` (macOS: `bin/BGADLL.dylib`) from
+BEN has this library as a submodule. `bash build_native.sh` in BEN builds it, or run
+`./build.sh` here; BEN then loads `bin/BGADLL.so` (macOS: `bin/BGADLL.dylib`) from
 this directory in place of the C# library under `<ben>/bin/BGA`, which stays there for
 `BEN_BGADLL=csharp`. Do not copy this library over the C# one. BEN's `src/preflight.py`
 reports the engine and solver in use.
@@ -71,12 +70,16 @@ byte-identical dumps:
 - C++ on ddfast;
 - C# on ddfast's `libdds` shim.
 
+`check.sh` runs this check. It builds the C# library from the BGA submodule (`extern/BGA`,
+with NativeAOT; it needs the .NET SDK), builds this library, runs both through `bench_bga` and
+compares the dumps:
+
 ```sh
-g++ -std=c++17 -O2 -o bin/bench_bga bench/bench_bga.cpp -ldl
-bin/bench_bga --lib bin/BGADLL.so --positions 300 --dump cpp.txt
-bin/bench_bga --lib <csharp>/BGADLL.so --preload <ben>/bin/libdds.so --positions 300 --dump cs.txt
-cmp cpp.txt cs.txt
+BGA_DDS_LIB=<ben>/bin/libdds.so ./check.sh    # Haglund DDS, which the C# library calls
 ```
+
+This library uses ddfast when it can load it (`BGA_DDFAST_LIB`, `DDFAST_TABLES`), else the
+same DDS.
 
 ## Performance
 
@@ -149,10 +152,15 @@ The sampling is the same as in C#, done in less time:
 
 ## Repository
 
-The C# library this ports, and the reference its results are checked against, is BGA's
-`BGADLL` and `BGADLL.Native`. This repository is the `BGADLL.Cpp` submodule of
-[randalburns/BGA](https://github.com/randalburns/BGA), a fork of BGA
-that keeps the C# sources alongside for that check.
+`extern/BGA` is [BGA](https://github.com/ThorvaldAagaard/BGA) as a submodule, pinned to the
+version this port reproduces (0.9.9.3). Its `BGADLL` and `BGADLL.Native` are the C# library
+ported here and the reference `check.sh` builds. A recursive clone skips it (`update = none`
+in `.gitmodules`), so projects that include this repository as a submodule, such as BEN, don't
+fetch BGA. `check.sh` fetches it; by hand, run
+`git submodule update --init --checkout extern/BGA`.
+
+When BGA changes BGADLL, port the change, move the submodule to the new version, and run
+`check.sh`.
 
 ## License
 
