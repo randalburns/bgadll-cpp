@@ -211,7 +211,9 @@ std::vector<Position> random_positions(int n, unsigned seed) {
   while (int(v.size()) < n) {
     Cards deck(52);
     for (int i = 0; i < 52; i++) deck[size_t(i)] = i;
-    std::shuffle(deck.begin(), deck.end(), rng);
+    // Fisher-Yates on rng()'s raw output: std::shuffle differs between libstdc++ and libc++,
+    // and the positions must be the same on every platform to compare results across them.
+    for (int i = 51; i > 0; i--) std::swap(deck[size_t(i)], deck[size_t(rng() % uint32_t(i + 1))]);
     Cards hand[4];
     for (int i = 0; i < 52; i++) hand[i / 13].push_back(deck[size_t(i)]);
     int trump = int(rng() % 5);  // BGADLL: 0..3 = C D H S, 4 = NT

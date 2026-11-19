@@ -39,6 +39,11 @@ jobs:
           echo "f849ce43164edab3e238e3dacfd65f7dab08fffde185c6726fb933975c8dc9f5  dds/libdds.so" | sha256sum -c -
       - name: Same results as the C# library
         run: BGA_DDS_LIB=$PWD/dds/libdds.so ./check.sh
+      - name: C# results, for the macOS job
+        uses: actions/upload-artifact@v4
+        with:
+          name: csharp-results
+          path: bin/check-csharp.txt
       - name: Results (on failure)
         if: failure()
         uses: actions/upload-artifact@v4
@@ -46,8 +51,12 @@ jobs:
           name: check-linux
           path: bin/check-*.txt
 
+  # The C# library is not run on macOS: on runners with fewer than 8 cores DDS rejects some of
+  # the 8 thread indexes it uses (BGA 0.9.9.3), and it scores those solves as 0 tricks. This
+  # library is checked against the C# results from the Linux job instead (same positions).
   macos:
     name: macos
+    needs: linux
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -67,9 +76,13 @@ jobs:
           mkdir -p dds
           curl -fsSL -o dds/libdds.dylib "https://raw.githubusercontent.com/lorserker/ben/$BEN_COMMIT/bin/BGA/macos/arm64/libdds.2.9.0.dylib"
           echo "ab05893e2e3810243bcdd134b159bb405564d979571b6b1b4c3084f82b3cbece  dds/libdds.dylib" | shasum -a 256 -c -
+      - name: C# results from the Linux job
+        uses: actions/download-artifact@v4
+        with:
+          name: csharp-results
+          path: reference
       - name: Same results as the C# library
-        # 3 cores: the fixed positions and 100 random ones (Linux checks 300)
-        run: BGA_DDS_LIB=$PWD/dds/libdds.dylib POSITIONS=100 ./check.sh
+        run: BGA_DDS_LIB=$PWD/dds/libdds.dylib REFERENCE=reference/check-csharp.txt ./check.sh
       - name: Results (on failure)
         if: failure()
         uses: actions/upload-artifact@v4
