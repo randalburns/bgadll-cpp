@@ -93,3 +93,8 @@ The C# library this ports, and the reference its results are checked against, is
 `BGADLL` and `BGADLL.Native`. This repository is the `BGADLL.Cpp` submodule of
 [randalburns/BGA](https://github.com/randalburns/BGA/tree/cpp-ddfast-port), a fork of BGA
 that keeps the C# sources alongside for that check.
+
+## License
+
+Apache License 2.0 (see [LICENSE](LICENSE)), as is ddfast. The code is a port of BGA's
+`BGADLL`, Copyright (c) 2024 Ark223, under the MIT License; its notice is in [NOTICE](NOTICE).
