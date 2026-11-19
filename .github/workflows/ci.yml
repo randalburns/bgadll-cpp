@@ -62,4 +62,5 @@ jobs:
           curl -fsSL -o dds/libdds.dylib "https://raw.githubusercontent.com/lorserker/ben/$BEN_COMMIT/bin/BGA/macos/arm64/libdds.2.9.0.dylib"
           echo "ab05893e2e3810243bcdd134b159bb405564d979571b6b1b4c3084f82b3cbece  dds/libdds.dylib" | shasum -a 256 -c -
       - name: Same results as the C# library
-        run: BGA_DDS_LIB=$PWD/dds/libdds.dylib ./check.sh
+        # 3 cores: the fixed positions and 100 random ones (Linux checks 300)
+        run: BGA_DDS_LIB=$PWD/dds/libdds.dylib POSITIONS=100 ./check.sh
