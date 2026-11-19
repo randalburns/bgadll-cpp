@@ -64,21 +64,56 @@ byte-identical dumps:
 - C++ on ddfast;
 - C# on ddfast's `libdds` shim.
 
-Milliseconds per evaluation over those positions:
-
-| | C# on DDS | C++ on DDS | C# on ddfast | C++ on ddfast |
-|---|---|---|---|---|
-| Linux x86-64 (Ryzen AI 9 HX 370, 12 threads) | 126.0 | 88.9 | 55.6 | 18.5 |
-| macOS (Apple M5, 10 threads), before the sampling changes below | 133.6 | 124.7 | 31.0 | 21.5 |
-
-On ddfast, 96% of the C++ library's time is in ddfast's search (perf, Linux).
-
 ```sh
 g++ -std=c++17 -O2 -o bin/bench_bga bench/bench_bga.cpp -ldl
 bin/bench_bga --lib bin/BGADLL.so --positions 300 --dump cpp.txt
 bin/bench_bga --lib <csharp>/BGADLL.so --preload <ben>/bin/libdds.so --positions 300 --dump cs.txt
 cmp cpp.txt cs.txt
 ```
+
+## Performance
+
+Milliseconds per evaluation (`bench_bga`, 12 threads, Linux x86-64, Ryzen AI 9 HX 370). Each
+figure is the median of 3 runs, with the builds interleaved, and all 24 runs gave the same
+results.
+- **All positions**: the mean over the 300 random positions.
+- **Own work**: the part of that mean spent in BGADLL itself (setup and sampling), not in the
+  solver.
+- **First trick**: the fixed declarer position at trick 1 (C(26,13) = 10.4M opponent splits),
+  where the sampling costs the most.
+
+Each row adds one change to the row above:
+
+| | Solver | All positions | Own work | First trick | Speedup (all) |
+|---|---|---:|---:|---:|---:|
+| C# library (NativeAOT) | DDS | 128.1 | 14.4 | 351 | 1.0x |
+| C++ port | DDS | 96.3 | 6.5 | 265 | 1.3x |
+| C++ port | ddfast | 24.1 | 6.3 | 95 | 5.3x |
+| + faster sampling, plain C++ | ddfast | 20.5 | 2.4 | 53 | 6.2x |
+| + AVX2 | ddfast | **19.6** | **1.5** | **46** | **6.5x** |
+
+What each change contributes:
+- **C++ (1.3x).** The C# library spends 14 ms of each evaluation on its own work and makes
+  slower solver calls (113 ms against 89 ms on the same DDS). On defence it is 25x slower
+  (1,069 ms against 42 ms).
+- **ddfast (4.0x on top).** The solver goes from 89 ms to 17 ms per evaluation.
+- **Faster sampling (1.2x).** Only the part of the shuffle that is read is computed, and the
+  sample search runs in parallel (see below). Own work drops from 6.3 ms to 2.4 ms, and the
+  first trick from 95 ms to 53 ms.
+- **AVX2 (1.05x overall, 1.16x on the first trick).** AVX2 vectorises the shuffle loop, the
+  only vector code. Own work drops from 2.4 ms to 1.5 ms.
+
+The solver time varies by about 5% from run to run, so the own-work column is the precise
+comparison between builds: every build makes exactly the same solver calls. On DDS, the
+sampling and AVX2 changes save the same few milliseconds (96.0 and 96.8 ms against 96.3 ms,
+within noise), against much longer solves.
+
+For reference, the C# library on ddfast's `libdds` shim takes 55.0 ms (18.9 ms own work, 168 ms
+on the first trick). On ddfast, perf puts 96% of the C++ library's time in ddfast's search and
+about 1% in BGADLL.
+
+macOS (Apple M5, 10 threads), measured before the faster sampling: C# on DDS 133.6, C++ on DDS
+124.7, C# on ddfast 31.0, C++ on ddfast 21.5.
 
 ## Differences from the C# library
 
