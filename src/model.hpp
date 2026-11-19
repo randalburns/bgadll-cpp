@@ -1,5 +1,5 @@
 // C++ port of BGADLL's model classes (Card, Hand, Play, Constraints, Utils,
-// CrossPlatformRandom). Semantics follow the C# sources in ../BGADLL line by line
+// CrossPlatformRandom). Semantics follow the C# sources in BGA's BGADLL/ line by line
 // where they are observable through the C ABI (list order, Distinct-preserving
 // AddRange, ToString formats, exceptions on bad input), so that a PIMC run makes
 // the same samples, in the same order, as the C# library.

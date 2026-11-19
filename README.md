@@ -1,7 +1,7 @@
-# BGADLL.Cpp
+# bgadll-cpp
 
-A C++ port of the BGADLL engine (`PIMC`, `PIMCDef` and the classes they use) with the same C
-ABI as `BGADLL.Native` (the 61 `bga_*` functions of [BGAFFI.cs](../BGADLL.Native/BGAFFI.cs)).
+A C++ port of the BGADLL engine of [BGA](https://github.com/ThorvaldAagaard/BGA) (`PIMC`, `PIMCDef` and the classes they use) with the same C
+ABI as `BGADLL.Native` (the 61 `bga_*` functions of [BGAFFI.cs](https://github.com/randalburns/BGA/blob/cpp-ddfast-port/BGADLL.Native/BGAFFI.cs)).
 It is a drop-in for BEN's `bin/BGA/linux/x64/BGADLL.so` (and `bin/BGA/macos/arm64/BGADLL.dylib`):
 BEN's ctypes bindings (`src/pimc/BGADLL_Native.py`) load it unchanged.
 
@@ -14,7 +14,7 @@ Linux x86-64 and macOS (Apple silicon), both tested; Arm Linux builds (`-mcpu=na
 ## Build
 
 ```sh
-BGADLL.Cpp/build.sh          # Linux: BGADLL.Cpp/bin/BGADLL.so; macOS: BGADLL.Cpp/bin/BGADLL.dylib
+./build.sh          # Linux: bin/BGADLL.so; macOS: bin/BGADLL.dylib
 ```
 
 C++17, no other dependencies: g++ on Linux (libstdc++ linked statically, `-march=x86-64-v3` by
@@ -86,3 +86,10 @@ cmp cpp.txt cs.txt
   - `PIMCDef` records the trick count as the weight.
   - `Clear()` leaves the shown hands.
   - Results are read back in descending order after `SortResults`.
+
+## Repository
+
+The C# library this ports, and the reference its results are checked against, is BGA's
+`BGADLL` and `BGADLL.Native`. This repository is the `BGADLL.Cpp` submodule of
+[randalburns/BGA](https://github.com/randalburns/BGA/tree/cpp-ddfast-port), a fork of BGA
+that keeps the C# sources alongside for that check.
