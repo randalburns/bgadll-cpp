@@ -81,6 +81,16 @@ BGA_DDS_LIB=<ben>/bin/libdds.so ./check.sh    # Haglund DDS, which the C# librar
 This library uses ddfast when it can load it (`BGA_DDFAST_LIB`, `DDFAST_TABLES`), else the
 same DDS.
 
+`./build.sh test` runs the unit tests, which check the sampler's fast paths against the code
+they replace (`tests/test_model.cpp`). CI (`.github/workflows/ci.yml`) runs on every pull
+request to `main`, on Linux x86-64 and macOS (Apple silicon):
+- the build;
+- the unit tests for each vector path: AVX2, Highway and scalar on Linux; Highway (NEON) and
+  scalar on macOS;
+- `check.sh` on Haglund DDS (BEN's binaries, pinned by commit and SHA-256).
+
+`main` takes changes only through pull requests that pass both jobs.
+
 ## Performance
 
 Milliseconds per evaluation (`bench_bga`, 12 threads, Linux x86-64, Ryzen AI 9 HX 370). Each

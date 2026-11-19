@@ -8,6 +8,7 @@
 #   ARCH=...   target flags (default -march=x86-64-v3 on x86-64, -mcpu=native on Arm; the
 #              solver libraries carry their own)
 #   OUT=...    output directory (default bin)
+# `./build.sh test` builds and runs the unit tests (tests/test_model.cpp) with the same flags.
 #   HWY=...    directory holding hwy/highway.h (Google Highway, header-only use). Used where
 #              the target has no AVX2 (Apple silicon: NEON). Unset, it is looked for with
 #              pkg-config, in Homebrew's include directory and beside a ddfast checkout;
@@ -35,6 +36,15 @@ case "${HWY:-}" in
     HWY_FLAGS="-I$HWY" ;;
 esac
 
+if [ "${1:-}" = test ]; then
+  if [ "$(uname -s)" = Darwin ]; then CXX=${CXX:-clang++}; ARCH=${ARCH:--mcpu=native}; else
+    CXX=${CXX:-g++}
+    case "$(uname -m)" in x86_64) ARCH=${ARCH:--march=x86-64-v3} ;; *) ARCH=${ARCH:--mcpu=native} ;; esac
+  fi
+  # shellcheck disable=SC2086
+  $CXX -std=c++17 -O2 -Wall -Wextra $ARCH $HWY_FLAGS -Isrc -o "$OUT/test_model" tests/test_model.cpp src/model.cpp
+  exec "$OUT/test_model"
+fi
 if [ "$(uname -s)" = Darwin ]; then
   CXX=${CXX:-clang++}
   ARCH=${ARCH:--mcpu=native}

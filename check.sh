@@ -28,6 +28,9 @@ esac
 
 dotnet publish extern/BGA/BGADLL.Native/BGADLL.Native.csproj -c Release -r "$RID" \
   --self-contained true -o bin/csharp >/dev/null
+# The C# library loads DDS as "dds": put it beside the library under that name (BEN's macOS
+# copy is libdds.2.9.0.dylib).
+cp "$BGA_DDS_LIB" "bin/csharp/libdds.$EXT"
 ./build.sh
 $CXX -std=c++17 -O2 -o bin/bench_bga bench/bench_bga.cpp -ldl
 
