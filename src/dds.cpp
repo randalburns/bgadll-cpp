@@ -2,6 +2,7 @@
 
 #include <dlfcn.h>
 
+#include <algorithm>
 #include <atomic>
 #include <condition_variable>
 #include <cstdio>
@@ -155,6 +156,10 @@ const Solver& solver() {
 }
 
 // Thread indexes 0..7 for Haglund's SolveBoardPBN, as DDS.cs's _threadIndexPool.
+// DDS thread indexes 0..7 (SetMaxThreads(8)), lowest free first. DDS may set up fewer threads
+// than asked (on macOS it caps them by cores and memory) and then rejects the higher indexes
+// with RETURN_THREAD_INDEX; such an index is retired and the solve retried on another, so the
+// pool settles on the indexes DDS accepts. Index 0 is always valid.
 class IndexPool {
  public:
   IndexPool() {
@@ -171,8 +176,15 @@ class IndexPool {
     {
       std::lock_guard<std::mutex> l(m_);
       free_.push_back(i);
+      std::sort(free_.rbegin(), free_.rend());  // lowest index at the back
     }
     cv_.notify_one();
+  }
+  // Drops index i (taken, not given back). False for index 0, which is kept.
+  bool retire(int i) {
+    if (i == 0) return false;
+    std::fprintf(stderr, "BGADLL: DDS rejected thread index %d; using fewer DDS threads\n", i);
+    return true;
   }
 
  private:
@@ -180,7 +192,21 @@ class IndexPool {
   std::condition_variable cv_;
   std::vector<int> free_;
 };
+
+constexpr int kDdsThreadIndexError = -15;  // RETURN_THREAD_INDEX
+
 IndexPool g_pool;
+
+// SolveBoardPBN on a pooled thread index, retiring indexes DDS rejects.
+int solve_pooled(SolveBoardPBNFn solve, const DealPBN& d, int solutions, FutureTricks* ft, int& ti) {
+  for (;;) {
+    ti = g_pool.take();
+    const int result = solve(d, -1, solutions, 1, ft, ti);
+    if (result == kDdsThreadIndexError && g_pool.retire(ti)) continue;
+    g_pool.give(ti);
+    return result;
+  }
+}
 
 // A failed solve is scored as 0 tricks; report each distinct failure once (DDS.cs).
 std::mutex g_report_m;
@@ -439,9 +465,8 @@ void DdsPosition::solve() {
   }
   fill_pbn(d, rem);
   FutureTricks ft{};
-  int ti = g_pool.take();
-  int result = sv.solve_pbn(d, -1, 3, 1, &ft, ti);
-  g_pool.give(ti);
+  int ti;
+  int result = solve_pooled(sv.solve_pbn, d, 3, &ft, ti);
   if (result != 1) {
     report_dds_error("SolveHaglund", result, ti);
     return;
@@ -498,9 +523,8 @@ bool DdsPosition::find_cheapest(Played& out) {
   }
   fill_pbn(d, rem);
   FutureTricks ft{};
-  int ti = g_pool.take();
-  int result = sv.solve_pbn(d, -1, 1, 1, &ft, ti);
-  g_pool.give(ti);
+  int ti;
+  int result = solve_pooled(sv.solve_pbn, d, 1, &ft, ti);
   if (result == 1 && ft.cards > 0) {
     int min_rank = 1 << 30, min_suit = 0;
     for (int i = 0; i < ft.cards; i++)

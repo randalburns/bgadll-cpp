@@ -81,6 +81,20 @@ BGA_DDS_LIB=<ben>/bin/libdds.so ./check.sh    # Haglund DDS, which the C# librar
 This library uses ddfast when it can load it (`BGA_DDFAST_LIB`, `DDFAST_TABLES`), else the
 same DDS.
 
+`./build.sh test` runs the unit tests, which check the sampler's fast paths against the code
+they replace (`tests/test_model.cpp`). CI (`.github/workflows/ci.yml`) runs on every pull
+request to `main`, on Linux x86-64 and macOS (Apple silicon):
+- the build;
+- the unit tests for each vector path: AVX2, Highway and scalar on Linux; Highway (NEON) and
+  scalar on macOS;
+- `check.sh` on Haglund DDS (BEN's binaries, pinned by commit and SHA-256). The macOS job
+  compares against the C# results from the Linux job (`REFERENCE=`), which works because
+  `bench_bga` deals the same positions on every platform. The C# library itself isn't run on
+  macOS: on runners with fewer than 8 cores, DDS rejects some of the 8 thread indexes it uses,
+  and it scores those solves as 0 tricks. This library retires a rejected index and retries.
+
+`main` takes changes only through pull requests that pass both jobs.
+
 ## Performance
 
 Milliseconds per evaluation (`bench_bga`, 12 threads, Linux x86-64, Ryzen AI 9 HX 370). Each
@@ -92,7 +106,8 @@ results.
 - **First trick**: the fixed declarer position at trick 1 (C(26,13) = 10.4M opponent splits),
   where the sampling costs the most.
 
-Each row adds one change to the row above:
+These were measured before `bench_bga` switched to a portable shuffle, so its 300 random
+positions are now a different set. Each row adds one change to the row above:
 
 | | Solver | All positions | Own work | First trick | Speedup (all) |
 |---|---|---:|---:|---:|---:|
