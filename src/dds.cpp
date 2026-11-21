@@ -107,10 +107,10 @@ void* open_library(const char* soname, const char* env_var) {
   return dlopen(soname, RTLD_NOW | RTLD_GLOBAL);
 }
 
+// No CPU check here: ddfast builds for any CPU (native AVX-512, or Google Highway), and a
+// libddfast built for instruction sets the CPU lacks stops the process at load itself, with a
+// message naming them (ddfast's cpu_check).
 bool load_ddfast(Solver& s) {
-#if defined(__x86_64__)
-  if (!__builtin_cpu_supports("avx512f") || !__builtin_cpu_supports("bmi2")) return false;
-#endif
   void* h = open_library(kDdfastLib, "BGA_DDFAST_LIB");
   if (!h) return false;
   auto cr = reinterpret_cast<CardResultsFn>(dlsym(h, kCardResultsSym));

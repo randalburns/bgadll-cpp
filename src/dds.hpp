@@ -12,8 +12,8 @@
 // libddfast.so for its own DDSolver, and may preload a libdds.so), so the process keeps one
 // copy of ddfast's tables.
 //
-// Selection: BGA_DDS_BACKEND=ddfast|haglund; unset, ddfast if it can be loaded (it needs
-// AVX-512 and BMI2), else haglund. Library paths: BGA_DDFAST_LIB, BGA_DDS_LIB, else the
+// Selection: BGA_DDS_BACKEND=ddfast|haglund; unset, ddfast if it can be loaded, else
+// haglund. Library paths: BGA_DDFAST_LIB, BGA_DDS_LIB, else the
 // directory of BGADLL.so, else the loader's search path. ddfast's tables come from
 // $DDFAST_TABLES (ddfast_compat::ensure_init, shared with BEN's ddfast module).
 #pragma once
